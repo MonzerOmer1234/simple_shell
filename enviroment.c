@@ -15,13 +15,13 @@ char **_getenv(char *name);
  */
 char **_getenv(char *name)
 {
-	int count  = 0, len;
+	int i = 0, len;
 
 	len = _strlen(name);
-	while (environ[count])
+	while (environ[i])
 	{
-		if (_strncmp(name, environ[count], len) == 0)
-			return (&environ[count]);
+		if (_strncmp(name, environ[i], len) == 0)
+			return (&environ[i]);
 		i++;
 	}
 	return (NULL);
