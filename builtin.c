@@ -1,104 +1,149 @@
-#include "main.h"
+#include "shell.h"
+
+int (*get_builtin(char *command))(char **args);
+int fshell_exit(char **args);
+int fshell_env(char **args);
+int fshell_setenv(char **args);
+
 
 /**
- * handle_exit - Handle the exit routine
- * @shell_name: The name of the shell is used for printing error messages
- * @head: The head of the linked list that needs to be freed
- * @arg_num: The number of arguments passed to the exit command
- * @args: The arguments passed to the exit command
+ * get_builtin - Gets the corresponding fshell builtin
+ *               function for a given command name.
  *
- * Return: void
- */
-void handle_exit(char *shell_name, alias_t **head, int arg_num, char **args)
-{
-	int *exit_status = get_exit_status();
-
-	if (arg_num > 2)
-		return;
-	if (arg_num == 2)
-		*exit_status = (_atoi(args[1]));
-
-	if (*exit_status < 0 || (arg_num == 2 && _atoi(args[1]) == 0
-				&& _strcmp(args[1], "0")))
-	{
-		wrong_exit_code_msg(shell_name, args[1]);
-		*exit_status = 2;
-	}
-
-	clean(args);
-	clean(environ);
-	free_list(*head);
-	exit(*exit_status & 255);
-}
-
-/**
- * handle_aliases - Handle the alias builtin
- * @head: The head of the linked list that needs to be freed
- * @arg_num: The number of arguments passed to the exit command
- * @args: The arguments passed to the exit command
+ * @command: The builtin command's name.
  *
- * Return: void
+ * Return: if the command is not an fshell builtin - NULL
+ *		   Otherwise - A function pointer to the corresponding builtin.
  */
-void handle_aliases(alias_t **head, int arg_num, char **args)
+int (*get_builtin(char *command))(char **args)
 {
-	if (arg_num == 1)
-		print_aliases(head);
-	else
-	{
-		arg_num = 1;
-		while (args[arg_num])
-		{
-			if (_strchr(args[arg_num], '='))
-				create_alias(head, args[arg_num]);
-			else
-				print_specific_alias(head, args[arg_num]);
-			arg_num++;
-		}
-	}
+	int i;
+	Builtin builtins[] = {
+		{ "exit", fshell_exit },
+		{ "env", fshell_env },
+		{ "setenv", fshell_setenv },
+	/*	{ "unsetenv", fshell_unsetenv }, */
+		{ NULL, NULL }
+	};
+
+	for (i = 0; builtins[i].name; i++)
+		if (_strcmp(builtins[i].name, command) == 0)
+			return (builtins[i].func);
+
+	return (NULL);
 }
 
 
 /**
- * search_builtins - Check if the command passed is a builtin
- *		     and if it is a builtin execute it
- * @head: The head of the linked list that needs to be freed
- * @shell_name: The name of the shell is used for printing error messages
- * @cmd_name: The name of the command
- * @args: The arguments list to pass to the handler functions
+ * fshell_exit - Causes normal process termination
+ *				 for the fshell shell.
  *
- * Return: If builtin found - 1
- *	   Otherwise - 0
+ * @args: An array of arguments containing the exit value.
+ *
+ * Return: If exit status is invalid - 2
+ *		   Otherwise - exits with the given status value,
+ *					   or the previous if not given.
  */
-int search_builtins(alias_t **head, char *shell_name,
-		char *cmd_name, char **args)
+int fshell_exit(char **args)
 {
-	int i = 0;
+	int i;
+	char *exit_arg = args[1];
 
-	while (args[i])
-		i++;
-
-	if (_strcmp(cmd_name, "exit") == 0)
-		handle_exit(shell_name, head, i, args);
-
-	else if (_strcmp(cmd_name, "env") == 0)
-		print_env();
-	else if (_strcmp(cmd_name, "setenv") == 0)
+	if (exit_arg)
 	{
-		if (i != 3)
-			return  (-1);
-		_setenv(args[1], args[2], 1);
+		for (i = 0; exit_arg[i]; i++)
+		/*TODO numbers starting with a '+' shouldn't be considered invalid */
+			if (exit_arg[i] < '0' || exit_arg[i] > '9')
+				return (write_error(args, 2));
+
+		status = str_to_int(exit_arg);
 	}
-	else if (_strcmp(cmd_name, "unsetenv") == 0)
+
+	free_args(args);
+	exit(status);
+}
+
+
+/**
+ * fshell_env - Prints the current environment.
+ *
+ * @args: An array of arguments to the env command (including the command).
+ *
+ * Return: If no enviroment is available - -1.
+ *		   Otherwise - 0.
+ */
+int fshell_env(char **args)
+{
+	int i;
+
+	UNUSED(args);
+
+	if (!environ)
+		return (-1);
+
+	for (i = 0; environ[i]; i++)
 	{
-		if (i != 2)
-			return  (-1);
-		_unsetenv(args[1]);
+		write(STDOUT_FILENO, environ[i], _strlen(environ[i]));
+		write(STDOUT_FILENO, "\n", 1);
 	}
-	else if (_strcmp(cmd_name, "cd") == 0)
-		change_directory(args[1]);
-	else if (_strcmp(cmd_name, "alias") == 0)
-		handle_aliases(head, i, args);
-	else
+	return (0);
+}
+
+
+/**
+ * fshell_setenv - Initializes a new environment variable,
+ *				   or modifies an existing one.
+ *
+ * @args: An array of arguments to the setenv command (including the command).
+ *
+ * Return: If an error occurs - 69.
+ *         Otherwise - 0.
+ */
+int fshell_setenv(char **args)
+{
+	char **env_var = NULL, **new_environ, *new_var,
+		 *name = args[1],
+		 *value = args[2];
+	size_t name_len, value_len, envsize = 0;
+	int i;
+
+	if (!name || !value)
+		return (write_error(args, 69));
+
+	name_len = _strlen(name);
+	value_len = _strlen(value);
+	new_var = malloc(name_len + 1 + value_len + 1);
+	if (!new_var)
+		return (write_error(args, 69));
+
+	_strcpy(new_var, name);
+	_strcat(new_var, "=");
+	_strcat(new_var, value);
+
+	env_var = _getenv(name);
+	if (env_var)
+	{
+		*env_var = new_var;
 		return (0);
-	return (1);
+	}
+
+	while (environ[envsize])
+		envsize++;
+
+	new_environ = malloc(sizeof(char *) * (envsize + 2));
+	if (!new_environ)
+	{
+		free(new_var);
+		return (write_error(args, 69));
+	}
+
+	for (i = 0; environ[i]; i++)
+		new_environ[i] = environ[i];
+
+	environ = new_environ;
+	environ[i] = new_var;
+	environ[i + 1] = NULL;
+
+	return (0);
 }
+
